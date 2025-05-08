@@ -1,0 +1,67 @@
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Pytest / testing
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# MyPy
+.mypy_cache/
+
+# PyInstaller
+*.spec
+build/
+dist/
+
+# Logs
+*.log
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Pipenv / Poetry
+Pipfile.lock
+poetry.lock
+
+# Database / runtime artifacts
+*.db
+*.sqlite3
+instance/
+*.pid
+
+# Local server history
+*.pid
+*.bak
+*.old
+*.orig
