@@ -1,0 +1,16 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.db.database import get_db
+
+router = APIRouter()
+
+@router.get("/api/countries")
+def list_countries(db: Session = Depends(get_db)):
+    results = db.execute(
+        "SELECT idd, name, iso2 FROM countries ORDER BY name"
+    ).fetchall()
+
+    return [
+        {"idd": row.idd, "name": row.name, "iso2": row.iso2}
+        for row in results
+    ]
