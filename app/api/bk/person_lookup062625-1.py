@@ -37,11 +37,11 @@ def lookup_person(data: PersonLookupRequest, db: Session = Depends(get_db)):
         params["email"] = data.email
 
     if data.phone_number:
-        conditions.append("number = :phone_number")
+        conditions.append("phone_number = :number")
         params["phone_number"] = data.phone_number
 
     if data.birth_date:
-        conditions.append("dob = :birth_date")
+        conditions.append("birth_date = :birth_date")
         params["birth_date"] = data.birth_date
 
     sql = f"""
