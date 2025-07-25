@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+# --- CORRECCIÓN: Importar 'Optional' desde el módulo 'typing' ---
 from typing import Optional
 
 # Cargar variables de entorno desde el archivo .env
@@ -30,16 +31,7 @@ class Settings:
     MAILGUN_FROM_NAME: str = os.getenv("MAILGUN_FROM_NAME", "YourLostAndFound.com")
     
     # Configuración de OTP
-    OTP_EXPIRATION_MINUTES: int = 10
-
-    # --- NUEVA VARIABLE AÑADIDA ---
-    # URL base de la aplicación de frontend para generar enlaces en los correos.
-    # Usará el valor de la variable de entorno 'FRONTEND_URL' o el valor por defecto si no la encuentra.
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://192.168.10.121:3051")
-    
-    #HCAPTCHA
-    HCAPTCHA_SECRET_KEY: str = os.getenv("HCAPTCHA_SECRET_KEY")
-
+    OTP_EXPIRATION_MINUTES: int = 10 # Actualizado a 10 minutos como solicitaste
 
 # Crear una instancia de la configuración para ser importada en otros archivos
 settings = Settings()
