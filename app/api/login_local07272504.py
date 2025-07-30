@@ -12,7 +12,7 @@ from typing import Optional
 from app.db.database import get_db, get_mongo_db, get_redis_client
 from app.utils.mongo_logger import log_error
 from app.utils.mailgun_client import send_verification_email
-from app.utils.otp_handler import generate_and_store_otp
+from app.api.register_local_personal import generate_and_store_otp
 from app.config import settings
 
 router = APIRouter()
@@ -51,43 +51,41 @@ def clear_rate_limit(redis_client: redis.Redis, email: str):
     redis_client.delete(key)
 
 
-# --- FUNCIÓN DE LOGIN REFACTORIZADA ---
+# --- FUNCIÓN CORREGIDA ---
 @router.post("/login/local")
 async def login_local_user(data: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db), mongo_db = Depends(get_mongo_db), redis_client: redis.Redis = Depends(get_redis_client)):
     
-    # Primero, verificar si el usuario ya está bloqueado por intentos ANTERIORES.
+    # NUEVO: Envolvemos toda la lógica en un bloque try/except
     try:
+        # La comprobación de límite de intentos ahora está dentro del try
         check_rate_limit(redis_client, data.email)
-    except HTTPException as e:
-        # Si ya está bloqueado, registrar el error y devolver la respuesta 429.
-        log_error(mongo_db, "/login/local", "POST", e, {"email": data.email}, {"client_host": request.client.host})
-        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
-    # Si no está bloqueado, proceder a verificar las credenciales.
-    if data.hcaptcha_token:
-        try:
-            async with httpx.AsyncClient() as client:
-                hcaptcha_response = await client.post("https://api.hcaptcha.com/siteverify", data={'secret': settings.HCAPTCHA_SECRET_KEY, 'response': data.hcaptcha_token})
-                if not hcaptcha_response.json().get("success"):
-                    raise HTTPException(status_code=400, detail="error_captcha_failed")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail="error_captcha_verification_failed")
+        if data.hcaptcha_token:
+            try:
+                async with httpx.AsyncClient() as client:
+                    hcaptcha_response = await client.post("https://api.hcaptcha.com/siteverify", data={'secret': settings.HCAPTCHA_SECRET_KEY, 'response': data.hcaptcha_token})
+                    if not hcaptcha_response.json().get("success"):
+                        raise HTTPException(status_code=400, detail="error_captcha_failed")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail="error_captcha_verification_failed")
 
-    query = text("""
-        SELECT u.idusers, a.hash_password, u.verified, p.first_name
-        FROM accounts a
-        JOIN users_has_accounts uha ON a.idaccounts = uha.accounts_idaccounts
-        JOIN users u ON uha.users_idusers = u.idusers
-        JOIN person p ON u.person_idperson = p.idperson
-        WHERE a.email = :email AND a.authentication_type_idauthentication_type = 1
-    """)
-    user_data = db.execute(query, {"email": data.email}).first()
+        query = text("""
+            SELECT u.idusers, a.hash_password, u.verified, p.first_name
+            FROM accounts a
+            JOIN users_has_accounts uha ON a.idaccounts = uha.accounts_idaccounts
+            JOIN users u ON uha.users_idusers = u.idusers
+            JOIN person p ON u.person_idperson = p.idperson
+            WHERE a.email = :email AND a.authentication_type_idauthentication_type = 1
+        """)
+        user_data = db.execute(query, {"email": data.email}).first()
 
-    # --- LÓGICA DE VALIDACIÓN CORREGIDA ---
-    # Verificar si las credenciales son correctas.
-    if user_data and bcrypt.checkpw(data.password.encode('utf-8'), user_data.hash_password.encode('utf-8')):
-        # **CASO DE ÉXITO**
-        # Si las credenciales son correctas, limpiar el contador de intentos y proceder.
+        if not user_data or not bcrypt.checkpw(data.password.encode('utf-8'), user_data.hash_password.encode('utf-8')):
+            record_failed_attempt(redis_client, data.email)
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "error_invalid_credentials"}
+            )
+
         clear_rate_limit(redis_client, data.email)
 
         user_id = user_data.idusers
@@ -95,6 +93,7 @@ async def login_local_user(data: LoginRequest, request: Request, response: Respo
 
         if not is_verified:
             otp_code = generate_and_store_otp(mongo_db, user_id=user_id, email=data.email, otp_context="LOGIN_VERIFICATION")
+            
             if otp_code:
                 send_verification_email(email_to=data.email, otp_code=otp_code, first_name=user_data.first_name, language='es')
                 return {"status": "success_pending_verification", "userId": user_id, "email": data.email}
@@ -103,28 +102,23 @@ async def login_local_user(data: LoginRequest, request: Request, response: Respo
 
         session_token = f"simulated_jwt_token_for_user_{user_id}"
         
-        # --- CORRECCIÓN CLAVE: Especificar path='/' para la cookie ---
         if data.remember_me:
-            response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax', path='/')
+            response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax')
         else:
-            response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax', path='/')
+            response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax')
 
         return {"status": "success", "token": session_token}
-    else:
-        # **CASO DE FALLO**
-        # Si las credenciales son incorrectas, registrar el intento fallido.
-        record_failed_attempt(redis_client, data.email)
-        
-        # Ahora, verificar si ESTE intento fallido ha provocado el bloqueo.
-        try:
-            check_rate_limit(redis_client, data.email)
-        except HTTPException as e:
-            # Si se lanza la excepción, significa que se alcanzó el límite. Devolver 429.
+
+    # NUEVO: Bloque para capturar la excepción del límite de intentos
+    except HTTPException as e:
+        # Verificamos si el error es el 429
+        if e.status_code == 429:
+            # Opcional: registrar este evento si lo deseas
             log_error(mongo_db, "/login/local", "POST", e, {"email": data.email}, {"client_host": request.client.host})
-            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
-        
-        # Si no se alcanzó el límite, devolver el error de credenciales inválidas.
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "error_invalid_credentials"}
-        )
+            # Devolvemos la respuesta JSON controlada que el frontend SÍ espera
+            return JSONResponse(
+                status_code=e.status_code,
+                content={"detail": e.detail}
+            )
+        # Si es otra HTTPException que no esperamos, la relanzamos para que FastAPI la maneje
+        raise e

@@ -4,39 +4,37 @@ import json
 from app.config import settings
 from app.utils.email_texts import email_content
 
-# MODIFICADO: La función ahora acepta 'email_type' para seleccionar la plantilla de texto correcta.
-def send_verification_email(email_to: str, otp_code: str, first_name: str, language: str = 'en', email_type: str = 'verification_otp') -> bool:
+def send_verification_email(email_to: str, otp_code: str, first_name: str, language: str = 'en') -> bool:
     """
-    Envía un correo electrónico con un código OTP usando la API de Mailgun.
-    La función ahora es genérica y puede enviar diferentes tipos de correos (verificación, reseteo de contraseña)
-    basado en el parámetro 'email_type'.
+    Envía un correo de verificación con un código OTP usando la API de Mailgun.
+    Ahora incluye el OTP en el subject y un enlace para reportar códigos no solicitados.
     """
     if not settings.MAILGUN_API_KEY or not settings.MAILGUN_DOMAIN:
         print("ERROR: Las credenciales de Mailgun no están configuradas. No se puede enviar el correo.")
         return False
 
+    # --- NUEVO: Comprobar que la URL del frontend esté configurada ---
     if not hasattr(settings, 'FRONTEND_URL') or not settings.FRONTEND_URL:
         print("CRITICAL ERROR: La variable FRONTEND_URL no está configurada en el archivo de settings. No se puede generar el enlace de reporte.")
-        report_link = "#"
+        # Decidimos no fallar el envío del correo, solo el enlace no funcionará.
+        # Podrías cambiar esto a 'return False' si el enlace es crítico.
+        report_link = "#" # Enlace de fallback
     else:
         report_data = {"email": email_to, "topic": "otp_not_authorized"}
         report_json = json.dumps(report_data)
         report_base64 = base64.urlsafe_b64encode(report_json.encode()).decode()
         report_link = f"{settings.FRONTEND_URL}/help?report={report_base64}"
 
-    # MODIFICADO: Selecciona dinámicamente el contenido del correo.
-    # Si el 'email_type' no existe, usa 'verification_otp' como fallback seguro.
-    texts = email_content.get(email_type, email_content.get("verification_otp", {}))
+    texts = email_content.get("verification_otp", {})
     
-    # El resto de la lógica para obtener los textos es la misma.
-    subject_template = texts.get("subject", {}).get(language, texts.get("subject", {}).get('en', 'Verification Code'))
+    subject_template = texts.get("subject", {}).get(language, texts.get("subject", {}).get('en'))
     subject = subject_template.format(otp_code=otp_code)
 
-    title = texts.get("title", {}).get(language, texts.get("title", {}).get('en', 'Verification'))
-    greeting = texts.get("greeting", {}).get(language, texts.get("greeting", {}).get('en', 'Hi'))
-    body = texts.get("body", {}).get(language, texts.get("body", {}).get('en', 'Here is your code.'))
-    farewell = texts.get("farewell", {}).get(language, texts.get("farewell", {}).get('en', 'The team'))
-    unsolicited_text_template = texts.get("unsolicited_link_text", {}).get(language, texts.get("unsolicited_link_text", {}).get('en', ''))
+    title = texts.get("title", {}).get(language, texts.get("title", {}).get('en'))
+    greeting = texts.get("greeting", {}).get(language, texts.get("greeting", {}).get('en'))
+    body = texts.get("body", {}).get(language, texts.get("body", {}).get('en'))
+    farewell = texts.get("farewell", {}).get(language, texts.get("farewell", {}).get('en'))
+    unsolicited_text_template = texts.get("unsolicited_link_text", {}).get(language, texts.get("unsolicited_link_text", {}).get('en'))
     
     unsolicited_text = unsolicited_text_template.format(link=report_link)
 
@@ -68,8 +66,8 @@ def send_verification_email(email_to: str, otp_code: str, first_name: str, langu
             }
         )
         response.raise_for_status()
-        print(f"Correo de tipo '{email_type}' enviado exitosamente a {email_to} en '{language}'.")
+        print(f"Correo de verificación enviado exitosamente a {email_to} en '{language}'.")
         return True
     except requests.exceptions.RequestException as e:
-        print(f"Error al enviar correo de tipo '{email_type}' a {email_to}: {e}")
+        print(f"Error al enviar correo de verificación a {email_to}: {e}")
         return False

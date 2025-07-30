@@ -102,12 +102,10 @@ async def login_local_user(data: LoginRequest, request: Request, response: Respo
                 raise HTTPException(status_code=500, detail="error_otp_generation_failed")
 
         session_token = f"simulated_jwt_token_for_user_{user_id}"
-        
-        # --- CORRECCIÓN CLAVE: Especificar path='/' para la cookie ---
         if data.remember_me:
-            response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax', path='/')
+            response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax')
         else:
-            response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax', path='/')
+            response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax')
 
         return {"status": "success", "token": session_token}
     else:

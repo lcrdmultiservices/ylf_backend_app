@@ -13,9 +13,11 @@ from app.api.consent import router as consents_router
 from app.api.login_local import router as login_local_router
 from app.api.verify_account import router as verify_account_router
 from app.api.resend_otp import router as resend_otp_router
+# --- NUEVO: Importar el router para registrar fallos ---
 from app.api.log_otp_failure import router as log_otp_failure_router
 from app.api.verify_hcaptcha import router as verify_hcaptcha_router
 from app.api import login_local, register_local_personal, password_recovery, logout, session_verify 
+
 
 # Configurar logging básico
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# --- Manejador de Excepciones ---
+# --- Manejador de Excepciones (sin cambios respecto a tu versión) ---
 @app.exception_handler(Exception)
 async def universal_exception_handler(request: Request, exc: Exception):
     logger.error("--- INICIO DEL REPORTE DE EXCEPCIÓN ---")
@@ -47,11 +49,12 @@ async def universal_exception_handler(request: Request, exc: Exception):
         content={"detail": detail},
     )
 
-# --- Middleware de CORS (CORREGIDO para cookies) ---
+
+# --- Middleware de CORS (sin cambios) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3051"],  # ✅ Tu frontend local
-    allow_credentials=True,                   # ✅ Necesario para enviar cookies
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,5 +71,6 @@ app.include_router(resend_otp_router, prefix="/api")
 app.include_router(log_otp_failure_router, prefix="/api")
 app.include_router(verify_hcaptcha_router, prefix="/api")
 app.include_router(password_recovery.router, prefix="/api")
-app.include_router(logout.router, prefix="/api")
-app.include_router(session_verify.router, prefix="/api")
+app.include_router(logout.router, prefix="/api") 
+app.include_router(session_verify.router, prefix="/api") # 2. Incluye el nuevo router
+

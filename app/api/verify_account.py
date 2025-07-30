@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+# --- NUEVO: Importar JSONResponse ---
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import datetime, timezone
 
+# Importaciones de nuestro proyecto
 from app.db.database import get_db, get_mongo_db 
 from app.utils.mongo_logger import log_error
+from app.utils.otp_handler import verify_otp
 
 router = APIRouter()
 
@@ -16,38 +20,50 @@ class VerifyRequest(BaseModel):
 @router.post("/verify-account")
 def verify_account(data: VerifyRequest, request: Request, response: Response, db: Session = Depends(get_db), mongo_db = Depends(get_mongo_db)):
     """
-    Verifica un código OTP. Devuelve siempre 200 OK, pero con un cuerpo JSON 
-    que indica el estado de la operación ('success' o 'error').
+    Verifica un código OTP para la activación de la cuenta usando la lógica centralizada.
     """
     if mongo_db is None:
-        # Aquí la llamada es correcta porque estamos dentro del mismo archivo
         log_error(mongo_db, request.url.path, "POST", "MongoDB connection not available.", data.dict())
-        response.status_code = 503
-        return {"status": "error", "detail": "error_db_connection"}
+        raise HTTPException(status_code=503, detail="error_db_connection")
 
-    # 1. Buscar el OTP en MongoDB.
-    otp_collection = mongo_db.otp_codes
-    otp_document = otp_collection.find_one({
-        "user_id": data.user_id,
-        "otp_code": data.otp_code,
-        "used": False,
-        "expires_at": {"$gt": datetime.now(timezone.utc)}
-    })
-
-    # 2. Si el OTP no es válido, devolver una respuesta de error controlada.
-    if not otp_document:
-        response.status_code = 400
-        return {"status": "error", "detail": "error_invalid_otp"}
-
-    # 3. Si el OTP es válido, proceder y devolver éxito.
     try:
-        otp_collection.update_one({"_id": otp_document["_id"]}, {"$set": {"used": True}})
+        # 1. Obtener el email del usuario desde la base de datos SQL
+        email_query = text("""
+            SELECT email FROM accounts 
+            WHERE idaccounts = (SELECT accounts_idaccounts FROM users_has_accounts WHERE users_idusers = :user_id AND `default` = 1)
+        """)
+        user_account = db.execute(email_query, {"user_id": data.user_id}).first()
+
+        if not user_account:
+            # Este es un error inesperado, por lo que una excepción es apropiada.
+            raise HTTPException(status_code=404, detail="error_user_not_found")
         
+        user_email = user_account[0]
+
+        # 2. Verificar el OTP usando la función centralizada
+        is_valid = verify_otp(
+            mongo_db=mongo_db,
+            email=user_email,
+            otp_code=data.otp_code,
+            otp_context="ACCOUNT_REGISTRATION",
+            delete_on_verify=True
+        )
+
+        # --- CORRECCIÓN CLAVE ---
+        # 3. Si el OTP no es válido, devolver una respuesta de error JSON controlada.
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "detail": "error_invalid_otp"}
+            )
+
+        # 4. Si el OTP es válido, activar la cuenta en la base de datos
         db.execute(text("UPDATE person SET status = 'active' WHERE idperson = :user_id"), {"user_id": data.user_id})
         db.execute(text("UPDATE users SET verified = 1 WHERE idusers = :user_id"), {"user_id": data.user_id})
         db.execute(text("UPDATE accounts SET email_verified = 1 WHERE idaccounts IN (SELECT accounts_idaccounts FROM users_has_accounts WHERE users_idusers = :user_id)"), {"user_id": data.user_id})
         db.commit()
         
+        # 5. Devolver éxito
         session_token = f"simulated_jwt_token_for_user_{data.user_id}"
         print(f"Cuenta para user_id {data.user_id} verificada y activada exitosamente.")
 
@@ -58,8 +74,6 @@ def verify_account(data: VerifyRequest, request: Request, response: Response, db
         }
 
     except Exception as e:
-        # --- CORRECCIÓN CLAVE ---
-        # Ahora pasamos el objeto 'mongo_db' a la función de logging.
-        log_error(mongo_db=mongo_db, endpoint=request.url.path, method="POST", error=str(e), request_payload=data.dict())
-        response.status_code = 500
-        return {"status": "error", "detail": "error_server_issue"}
+        db.rollback()
+        log_error(mongo_db=mongo_db, endpoint=request.url.path, method="POST", error=e, request_payload=data.dict())
+        raise HTTPException(status_code=500, detail="error_server_issue")

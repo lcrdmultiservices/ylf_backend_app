@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+# --- NUEVO: Importar JSONResponse ---
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -12,7 +13,7 @@ from typing import Optional
 from app.db.database import get_db, get_mongo_db, get_redis_client
 from app.utils.mongo_logger import log_error
 from app.utils.mailgun_client import send_verification_email
-from app.utils.otp_handler import generate_and_store_otp
+from app.api.register_local_personal import generate_and_store_otp
 from app.config import settings
 
 router = APIRouter()
@@ -23,7 +24,7 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
     hcaptcha_token: Optional[str] = None
 
-# --- Rate Limiting (sin cambios) ---
+# --- Rate Limiting con Redis (sin cambios) ---
 LOGIN_ATTEMPT_LIMIT = 5
 LOGIN_ATTEMPT_TIMEFRAME = timedelta(minutes=15)
 
@@ -51,19 +52,11 @@ def clear_rate_limit(redis_client: redis.Redis, email: str):
     redis_client.delete(key)
 
 
-# --- FUNCIÓN DE LOGIN REFACTORIZADA ---
 @router.post("/login/local")
 async def login_local_user(data: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db), mongo_db = Depends(get_mongo_db), redis_client: redis.Redis = Depends(get_redis_client)):
     
-    # Primero, verificar si el usuario ya está bloqueado por intentos ANTERIORES.
-    try:
-        check_rate_limit(redis_client, data.email)
-    except HTTPException as e:
-        # Si ya está bloqueado, registrar el error y devolver la respuesta 429.
-        log_error(mongo_db, "/login/local", "POST", e, {"email": data.email}, {"client_host": request.client.host})
-        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+    check_rate_limit(redis_client, data.email)
 
-    # Si no está bloqueado, proceder a verificar las credenciales.
     if data.hcaptcha_token:
         try:
             async with httpx.AsyncClient() as client:
@@ -83,48 +76,35 @@ async def login_local_user(data: LoginRequest, request: Request, response: Respo
     """)
     user_data = db.execute(query, {"email": data.email}).first()
 
-    # --- LÓGICA DE VALIDACIÓN CORREGIDA ---
-    # Verificar si las credenciales son correctas.
-    if user_data and bcrypt.checkpw(data.password.encode('utf-8'), user_data.hash_password.encode('utf-8')):
-        # **CASO DE ÉXITO**
-        # Si las credenciales son correctas, limpiar el contador de intentos y proceder.
-        clear_rate_limit(redis_client, data.email)
-
-        user_id = user_data.idusers
-        is_verified = user_data.verified
-
-        if not is_verified:
-            otp_code = generate_and_store_otp(mongo_db, user_id=user_id, email=data.email, otp_context="LOGIN_VERIFICATION")
-            if otp_code:
-                send_verification_email(email_to=data.email, otp_code=otp_code, first_name=user_data.first_name, language='es')
-                return {"status": "success_pending_verification", "userId": user_id, "email": data.email}
-            else:
-                raise HTTPException(status_code=500, detail="error_otp_generation_failed")
-
-        session_token = f"simulated_jwt_token_for_user_{user_id}"
-        
-        # --- CORRECCIÓN CLAVE: Especificar path='/' para la cookie ---
-        if data.remember_me:
-            response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax', path='/')
-        else:
-            response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax', path='/')
-
-        return {"status": "success", "token": session_token}
-    else:
-        # **CASO DE FALLO**
-        # Si las credenciales son incorrectas, registrar el intento fallido.
+    # --- LÓGICA DE ERROR CORREGIDA Y DEFINITIVA ---
+    # En lugar de lanzar una excepción, devolvemos una respuesta JSON directamente.
+    # Esto evita que el error sea malinterpretado por otros manejadores.
+    if not user_data or not bcrypt.checkpw(data.password.encode('utf-8'), user_data.hash_password.encode('utf-8')):
         record_failed_attempt(redis_client, data.email)
-        
-        # Ahora, verificar si ESTE intento fallido ha provocado el bloqueo.
-        try:
-            check_rate_limit(redis_client, data.email)
-        except HTTPException as e:
-            # Si se lanza la excepción, significa que se alcanzó el límite. Devolver 429.
-            log_error(mongo_db, "/login/local", "POST", e, {"email": data.email}, {"client_host": request.client.host})
-            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
-        
-        # Si no se alcanzó el límite, devolver el error de credenciales inválidas.
         return JSONResponse(
             status_code=401,
             content={"detail": "error_invalid_credentials"}
         )
+
+    clear_rate_limit(redis_client, data.email)
+
+    user_id = user_data.idusers
+    is_verified = user_data.verified
+
+    if not is_verified:
+        otp_code = generate_and_store_otp(mongo_db, user_id=user_id, email=data.email, otp_context="LOGIN_VERIFICATION")
+        
+        if otp_code:
+            send_verification_email(email_to=data.email, otp_code=otp_code, first_name=user_data.first_name, language='es')
+            return {"status": "success_pending_verification", "userId": user_id, "email": data.email}
+        else:
+            raise HTTPException(status_code=500, detail="error_otp_generation_failed")
+
+    session_token = f"simulated_jwt_token_for_user_{user_id}"
+    
+    if data.remember_me:
+        response.set_cookie(key="session_token", value=session_token, max_age=172800, httponly=True, samesite='lax')
+    else:
+        response.set_cookie(key="session_token", value=session_token, httponly=True, samesite='lax')
+
+    return {"status": "success", "token": session_token}
