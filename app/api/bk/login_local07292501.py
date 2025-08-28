@@ -1,4 +1,3 @@
-# en app/api/login_local.py
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
@@ -15,6 +14,7 @@ from app.utils.mongo_logger import log_error
 from app.utils.mailgun_client import send_verification_email
 from app.utils.otp_handler import generate_and_store_otp
 from app.config import settings
+# --- NUEVAS IMPORTACIONES ---
 from app.utils.jwt_handler import create_access_token
 
 router = APIRouter()
@@ -28,7 +28,7 @@ class LoginRequest(BaseModel):
 LOGIN_ATTEMPT_LIMIT = 5
 LOGIN_ATTEMPT_TIMEFRAME = timedelta(minutes=15)
 
-# (Las funciones de rate limit permanecen igual)
+# (Las funciones check_rate_limit, record_failed_attempt y clear_rate_limit permanecen igual)
 def check_rate_limit(redis_client: redis.Redis, email: str):
     if redis_client is None: return True
     key = f"login_attempts:{email}"
@@ -52,9 +52,9 @@ def clear_rate_limit(redis_client: redis.Redis, email: str):
     key = f"login_attempts:{email}"
     redis_client.delete(key)
 
+
 @router.post("/login/local")
-async def login_local_user(data: LoginRequest, request: Request, db: Session = Depends(get_db), mongo_db = Depends(get_mongo_db), redis_client: redis.Redis = Depends(get_redis_client)):
-    # ... (La lógica de rate limit, hcaptcha y consulta a la BD no cambia) ...
+async def login_local_user(data: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db), mongo_db = Depends(get_mongo_db), redis_client: redis.Redis = Depends(get_redis_client)):
     try:
         check_rate_limit(redis_client, data.email)
     except HTTPException as e:
@@ -70,11 +70,19 @@ async def login_local_user(data: LoginRequest, request: Request, db: Session = D
         except Exception as e:
             raise HTTPException(status_code=500, detail="error_captcha_verification_failed")
 
-    query = text("SELECT u.idusers, a.hash_password, u.verified, p.first_name FROM accounts a JOIN users_has_accounts uha ON a.idaccounts = uha.accounts_idaccounts JOIN users u ON uha.users_idusers = u.idusers JOIN person p ON u.person_idperson = p.idperson WHERE a.email = :email AND a.authentication_type_idauthentication_type = 1")
+    query = text("""
+        SELECT u.idusers, a.hash_password, u.verified, p.first_name
+        FROM accounts a
+        JOIN users_has_accounts uha ON a.idaccounts = uha.accounts_idaccounts
+        JOIN users u ON uha.users_idusers = u.idusers
+        JOIN person p ON u.person_idperson = p.idperson
+        WHERE a.email = :email AND a.authentication_type_idauthentication_type = 1
+    """)
     user_data = db.execute(query, {"email": data.email}).first()
-    
+
     if user_data and bcrypt.checkpw(data.password.encode('utf-8'), user_data.hash_password.encode('utf-8')):
         clear_rate_limit(redis_client, data.email)
+
         user_id = user_data.idusers
         is_verified = user_data.verified
 
@@ -86,21 +94,22 @@ async def login_local_user(data: LoginRequest, request: Request, db: Session = D
             else:
                 raise HTTPException(status_code=500, detail="error_otp_generation_failed")
 
+        # --- LÓGICA DE CREACIÓN DE TOKEN JWT ---
         if data.remember_me:
+            # Sesión larga (ej. 30 días) si el usuario marca "Recordarme"
             expires = timedelta(days=30)
-            max_age = int(expires.total_seconds())
+            max_age = expires.total_seconds()
         else:
+            # Sesión corta (ej. 2 horas) por defecto
             expires = timedelta(hours=2)
-            max_age = None
+            max_age = None # La cookie expira cuando el navegador se cierra
 
+        # Creamos el token con el ID de usuario y la duración
+        # El 'sub' (subject) es la forma estándar de guardar el ID de usuario en un JWT
         token_data = {"sub": str(user_id)}
         access_token = create_access_token(data=token_data, expires_delta=expires)
         
-        # --- LÓGICA DE RESPUESTA CORREGIDA ---
-        # 1. Creamos el objeto JSONResponse con el cuerpo del mensaje.
-        response = JSONResponse(content={"status": "success", "token": access_token})
-        
-        # 2. Establecemos la cookie en ESE objeto de respuesta.
+        # Guardamos el token en la cookie
         response.set_cookie(
             key="session_token",
             value=access_token,
@@ -109,11 +118,9 @@ async def login_local_user(data: LoginRequest, request: Request, db: Session = D
             samesite='lax',
             path='/'
         )
-        
-        # 3. Devolvemos el objeto de respuesta modificado.
-        return response
+
+        return {"status": "success", "token": access_token}
     else:
-        # (La lógica de fallo de login no cambia)
         record_failed_attempt(redis_client, data.email)
         try:
             check_rate_limit(redis_client, data.email)
@@ -121,4 +128,7 @@ async def login_local_user(data: LoginRequest, request: Request, db: Session = D
             log_error(mongo_db, "/login/local", "POST", e, {"email": data.email}, {"client_host": request.client.host})
             return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
         
-        return JSONResponse(status_code=401, content={"detail": "error_invalid_credentials"})
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "error_invalid_credentials"}
+        )

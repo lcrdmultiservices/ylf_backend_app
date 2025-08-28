@@ -16,7 +16,6 @@ from app.api.resend_otp import router as resend_otp_router
 from app.api.log_otp_failure import router as log_otp_failure_router
 from app.api.verify_hcaptcha import router as verify_hcaptcha_router
 from app.api import login_local, register_local_personal, password_recovery, logout, session_verify 
-from app.api.ui_config import router as ui_config_router
 
 # Configurar logging básico
 logging.basicConfig(level=logging.INFO)
@@ -71,4 +70,3 @@ app.include_router(verify_hcaptcha_router, prefix="/api")
 app.include_router(password_recovery.router, prefix="/api")
 app.include_router(logout.router, prefix="/api")
 app.include_router(session_verify.router, prefix="/api")
-app.include_router(ui_config_router, prefix="/api")

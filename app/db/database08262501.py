@@ -49,7 +49,11 @@ def get_db() -> Generator[Session, None, None]:
 
 def get_mongo_db():
     if mongo_client is not None:
-        yield mongo_client[settings.MONGO_DB_NAME]
+        try:
+            yield mongo_client[settings.MONGO_DB_NAME]
+        except Exception as e:
+            print(f"No se pudo obtener la base de datos de MongoDB: {e}")
+            raise HTTPException(status_code=500, detail="Could not connect to logging service.")
     else:
         raise HTTPException(status_code=500, detail="Logging service is not configured.")
 

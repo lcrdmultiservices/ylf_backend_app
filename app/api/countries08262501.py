@@ -21,7 +21,6 @@ def get_country_idd_list(request: Request, db: Session = Depends(get_db)):
 
         # 1. Registra el error detallado en MongoDB para los desarrolladores.
         log_error(
-            mongo_db=mongo_db,
             endpoint="/countries/idd",
             method="GET",
             error=e,

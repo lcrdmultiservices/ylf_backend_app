@@ -33,7 +33,7 @@ def lookup_person(data: PersonLookupRequest, request: Request, db: Session = Dep
         params["last_name"] = data.last_name
 
     if data.email:
-        conditions.append("(person_primary_email = :email OR account_email = :email)")
+        conditions.append("(person_primary_email = :email OR identifier_email = :email OR account_email = :email)")
         params["email"] = data.email
 
     if data.phone_number:

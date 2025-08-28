@@ -11,7 +11,7 @@ class Settings:
     DB_PASS: str = os.getenv("DB_PASS", "LcRd1804")
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_PORT: str = os.getenv("DB_PORT", "3306")
-    DB_NAME: str = os.getenv("DB_NAME", "ylf_db")
+    DB_NAME: str = os.getenv("DB_NAME", "ylf_db1")
     DATABASE_URL: str = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
     # Configuración de MongoDB
@@ -39,6 +39,10 @@ class Settings:
     
     #HCAPTCHA
     HCAPTCHA_SECRET_KEY: str = os.getenv("HCAPTCHA_SECRET_KEY")
+    
+    #La clave secreta y el algoritmo desde las variables de entorno/defaults
+    SECRET_KEY: str = os.getenv("SECRET_KEY")
+    ALGORITHM: str = "HS256"
 
 
 # Crear una instancia de la configuración para ser importada en otros archivos

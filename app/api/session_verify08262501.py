@@ -20,5 +20,5 @@ async def verify_session(request: Request, token: Optional[str] = Depends(get_se
         return {"status": "success", "detail": "Session is valid.", "user_id": payload.get("user_id")}
     except HTTPException as e:
         if e.detail == "invalid_token" or e.detail == "invalid_token_payload":
-            log_error(mongo_db=mongo_db, endpoint="/session/verify", method="GET", error=e, request_data={"token_used": token}, user_context={"client_host": request.client.host})
+            log_error(db=mongo_db, endpoint="/session/verify", method="GET", error=e, request_data={"token_used": token}, user_context={"client_host": request.client.host})
         raise e
