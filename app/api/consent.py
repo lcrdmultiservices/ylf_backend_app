@@ -40,7 +40,7 @@ def get_consent_options(language_code: str, request: Request, db: Session = Depe
     try:
         # La consulta ya no necesita parámetros de idioma
         results = db.execute(query).fetchall()
-
+       
         if not results:
             return []
 
