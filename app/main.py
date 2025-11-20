@@ -17,12 +17,22 @@ from app.api.log_otp_failure import router as log_otp_failure_router
 from app.api.verify_hcaptcha import router as verify_hcaptcha_router
 from app.api import login_local, register_local_personal, password_recovery, logout, session_verify 
 from app.api.ui_config import router as ui_config_router
+from app.routers import user_groups 
+from app.api import asset_classifications
+from app.api import asset_management
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from app.core import limiter 
+from app.api import identifier_manager
 
 # Configurar logging básico
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 app = FastAPI()
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Manejador de Excepciones ---
 @app.exception_handler(Exception)
@@ -51,7 +61,7 @@ async def universal_exception_handler(request: Request, exc: Exception):
 # --- Middleware de CORS (CORREGIDO para cookies) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3051"],  # ✅ Tu frontend local
+    allow_origins=["*"],  # ✅ Tu frontend local
     allow_credentials=True,                   # ✅ Necesario para enviar cookies
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,3 +82,7 @@ app.include_router(password_recovery.router, prefix="/api")
 app.include_router(logout.router, prefix="/api")
 app.include_router(session_verify.router, prefix="/api")
 app.include_router(ui_config_router, prefix="/api")
+app.include_router(user_groups.router, prefix="/api") 
+app.include_router(asset_classifications.router, prefix="/api")
+app.include_router(asset_management.router, prefix="/api")
+app.include_router(identifier_manager.router, prefix="/api")

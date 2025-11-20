@@ -25,7 +25,7 @@ async def get_menu_config(user_type_id: int, mongo_db = Depends(get_mongo_db)):
         if not config_document:
             raise HTTPException(status_code=404, detail="error_ui_config_not_found")
         
-        return serialize_mongo_document(config_document)
+        return [serialize_mongo_document(config_document)]
 
     except Exception as e:
         print(f"ERROR fetching menu config: {e}") 

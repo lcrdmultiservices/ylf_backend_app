@@ -4,19 +4,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 import bcrypt
 from typing import Optional
-# --- CORRECCIÓN: Se añade la importación que faltaba ---
 from datetime import datetime, timezone
 
 # Importaciones de nuestro proyecto
 from app.db.database import get_db, get_mongo_db 
 from app.utils.mongo_logger import log_error
 from app.utils.mailgun_client import send_verification_email
-# MODIFICADO: Ahora importamos desde el nuevo manejador de OTP
 from app.utils.otp_handler import generate_and_store_otp
 
 router = APIRouter()
 
-# Se mantiene el modelo Pydantic completo del usuario
 class RegisterLocalUser(BaseModel):
     first_name: str
     last_name: str
@@ -30,8 +27,9 @@ class RegisterLocalUser(BaseModel):
     anonymous_consent_id: Optional[str] = None
     language: str = 'en'
 
-# --- Las funciones de ayuda para el consentimiento y hash se mantienen ---
+# --- Las funciones de ayuda se mantienen igual ---
 def log_consent_to_mongo(mongo_db, user_id: int, process_key: str, option_key: str, status: str, version_id: Optional[int], request: Request):
+    # ... (código sin cambios)
     if mongo_db is None: return
     try:
         consent_log_collection = mongo_db.consent_logs
@@ -41,6 +39,7 @@ def log_consent_to_mongo(mongo_db, user_id: int, process_key: str, option_key: s
         log_error(mongo_db=mongo_db, endpoint="/register/local/personal", method="POST-MONGO-CONSENT", error=e, request_payload={"user_id": user_id, "process_key": process_key})
 
 def associate_anonymous_consent(mongo_db, user_id: int, anonymous_id: str):
+    # ... (código sin cambios)
     if mongo_db is None or anonymous_id is None: return
     try:
         consent_log_collection = mongo_db.consent_logs
@@ -49,6 +48,7 @@ def associate_anonymous_consent(mongo_db, user_id: int, anonymous_id: str):
         log_error(mongo_db=mongo_db, endpoint="/register/local/personal", method="POST-MONGO-ASSOCIATE", error=e, request_payload={"user_id": user_id, "anonymous_id": anonymous_id})
 
 def hash_password(password: str) -> str:
+    # ... (código sin cambios)
     salt = bcrypt.gensalt()
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
     return hashed_password.decode('utf-8')
@@ -59,7 +59,7 @@ def register_local_user(data: RegisterLocalUser, request: Request, db: Session =
     
     person_id = None
     try:
-        # Se mantiene toda la lógica de creación de usuario en MySQL
+        # --- Creación de Person, Phone, Account y User (sin cambios) ---
         existing_account = db.execute(text("SELECT idaccounts FROM accounts WHERE email = :email"), {"email": data.email}).fetchone()
         if existing_account:
             raise HTTPException(status_code=409, detail="error_email_exists")
@@ -80,35 +80,49 @@ def register_local_user(data: RegisterLocalUser, request: Request, db: Session =
         db.execute(account_query, {"email": data.email, "hash_pw": hashed_pw})
         account_id = db.execute(text("SELECT LAST_INSERT_ID()")).scalar()
         
+        # El ID de users es el mismo que el de person
+        user_id = person_id
         user_query = text("INSERT INTO users (idusers, user_type_iduser_type, person_idperson, enabled, verified) VALUES (:id, 1, :pid, 1, 0)")
-        db.execute(user_query, {"id": person_id, "pid": person_id})
+        db.execute(user_query, {"id": user_id, "pid": person_id})
         
         user_account_link_query = text("INSERT INTO users_has_accounts (users_idusers, accounts_idaccounts, `default`) VALUES (:uid, :aid, 1)")
-        db.execute(user_account_link_query, {"uid": person_id, "aid": account_id})
+        db.execute(user_account_link_query, {"uid": user_id, "aid": account_id})
+
+        # --- NUEVO: Inicialización de registros en tablas relacionadas ---
+        
+        # 1. Inicializar user_counters
+        # El ID es autoincremental, solo necesitamos enlazarlo al ID del nuevo usuario.
+        counters_query = text("INSERT INTO user_counters (users_idusers) VALUES (:uid)")
+        db.execute(counters_query, {"uid": user_id})
+        
+        # 2. Inicializar el grupo por defecto en user_groups
+        # El group_id es autoincremental, el parent es NULL para el grupo raíz.
+        group_query = text("""
+            INSERT INTO user_groups (owner_user_id, group_name, parent_group_id) 
+            VALUES (:owner_id, 'default', NULL)
+        """)
+        db.execute(group_query, {"owner_id": user_id})
+
         db.commit()
     except Exception as e:
         db.rollback()
         log_error(mongo_db=mongo_db, endpoint="/register/local/personal", method="POST-MYSQL", error=e, request_payload=data.dict())
         raise HTTPException(status_code=500, detail="error_registration_failed")
 
-    # Se mantiene la lógica de consentimientos
+    # --- Lógica de consentimientos y envío de OTP (sin cambios) ---
     if data.anonymous_consent_id:
-        associate_anonymous_consent(mongo_db, user_id=person_id, anonymous_id=data.anonymous_consent_id)
-    log_consent_to_mongo(mongo_db, user_id=person_id, process_key='terms_acceptance_personal', option_key='accept_terms_personal', status='granted', version_id=data.terms_id, request=request)
+        associate_anonymous_consent(mongo_db, user_id=user_id, anonymous_id=data.anonymous_consent_id)
+    log_consent_to_mongo(mongo_db, user_id=user_id, process_key='terms_acceptance_personal', option_key='accept_terms_personal', status='granted', version_id=data.terms_id, request=request)
     if data.marketing_accepted:
-        log_consent_to_mongo(mongo_db, user_id=person_id, process_key='marketing_emails_opt_in', option_key='allow_marketing_emails', status='granted', version_id=None, request=request)
+        log_consent_to_mongo(mongo_db, user_id=user_id, process_key='marketing_emails_opt_in', option_key='allow_marketing_emails', status='granted', version_id=None, request=request)
     else:
-        log_consent_to_mongo(mongo_db, user_id=person_id, process_key='marketing_emails_opt_in', option_key='allow_marketing_emails', status='denied', version_id=None, request=request)
+        log_consent_to_mongo(mongo_db, user_id=user_id, process_key='marketing_emails_opt_in', option_key='allow_marketing_emails', status='denied', version_id=None, request=request)
 
-    # La llamada a generate_and_store_otp ahora usa la función importada
-    otp_code = generate_and_store_otp(mongo_db, user_id=person_id, email=data.email, otp_context="ACCOUNT_REGISTRATION")
+    otp_code = generate_and_store_otp(mongo_db, user_id=user_id, email=data.email, otp_context="ACCOUNT_REGISTRATION")
     
     if otp_code:
         send_verification_email(email_to=data.email, otp_code=otp_code, first_name=data.first_name, language=data.language)
     else:
         raise HTTPException(status_code=500, detail="error_otp_generation_failed")
 
-    return {"status": "success_pending_verification", "message": "User registered. Please check your email for verification code.", "userId": person_id}
-
-# Las funciones generate_and_store_otp y verify_otp han sido eliminadas de este archivo
-# y ahora se importan desde app/utils/otp_handler.py
+    return {"status": "success_pending_verification", "message": "User registered. Please check your email for verification code.", "userId": user_id}
