@@ -64,17 +64,26 @@ async def get_user_groups(db: Session = Depends(get_db), current_user: dict = De
 async def create_user_group(group: GroupCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     user_id_int = int(current_user.get("user_id"))
 
-    # ✅ CAMBIO: Escribimos la consulta de inserción en SQL
+    # Si no se especifica padre, colgamos del grupo raíz del usuario (parent_group_id IS NULL)
+    parent_id = group.parent_group_id
+    if parent_id is None:
+        root = db.execute(
+            text("SELECT group_id FROM user_groups WHERE owner_user_id = :uid AND parent_group_id IS NULL LIMIT 1"),
+            {"uid": user_id_int}
+        ).first()
+        if root:
+            parent_id = root.group_id
+
     query = text("""
-        INSERT INTO user_groups (owner_user_id, group_name, parent_group_id) 
+        INSERT INTO user_groups (owner_user_id, group_name, parent_group_id)
         VALUES (:owner_user_id, :group_name, :parent_group_id)
     """)
-    
+
     try:
         result = db.execute(query, {
             "owner_user_id": user_id_int,
             "group_name": group.group_name,
-            "parent_group_id": group.parent_group_id
+            "parent_group_id": parent_id
         })
         db.commit()
 
