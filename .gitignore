@@ -65,3 +65,5 @@ instance/
 *.bak
 *.old
 *.orig
+archivo.txt
+backend.txt
