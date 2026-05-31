@@ -24,6 +24,27 @@ class AssetCreate(BaseModel):
     group_id: int | None = None
     parent_asset_id: int | None = None
     item_type_id: int # El id del tipo de la tabla asset_types
+
+class AssetDetailOut(BaseModel):
+    idqr_assets: int
+    asset_name: str
+    asset_color: str | None = None
+    asset_serial: str | None = None
+    asset_description: str | None = None
+    group_id: int | None = None
+    parent_asset_id: int | None = None
+    iditem_types: int
+    status: str
+    image_url: str | None = None
+
+class AssetUpdate(BaseModel):
+    asset_name: str
+    asset_description: str | None = None
+    asset_color: str | None = None
+    asset_serial: str | None = None
+    group_id: int | None = None
+    parent_asset_id: int | None = None
+    iditem_types: int
     
 
 # --- Constantes de Configuración de Archivos ---
@@ -221,7 +242,7 @@ async def get_all_assets(
     offset = (page - 1) * limit
 
     # 2. Obtener el número total de ítems para el usuario (para la paginación)
-    total_items_query = text("SELECT COUNT(*) FROM qr_assets WHERE users_idusers = :user_id")
+    total_items_query = text("SELECT COUNT(*) FROM qr_assets WHERE users_idusers = :user_id AND status != 'DELETED'")
     total_items = db.execute(total_items_query, {"user_id": user_id}).scalar_one()
 
     # 3. Consulta principal para obtener los datos de los ítems de forma paginada
@@ -247,6 +268,7 @@ async def get_all_assets(
             user_groups AS ug ON a.group_id = ug.group_id
         WHERE
             a.users_idusers = :user_id
+            AND a.status != 'DELETED'
         ORDER BY
             a.activation_date DESC
         LIMIT :limit OFFSET :offset
@@ -272,3 +294,133 @@ async def get_all_assets(
     except Exception as e:
         log_error(get_mongo_db(), "/assets", "GET", e, user_context={"user_id": user_id})
         raise HTTPException(status_code=500, detail="Error fetching assets")
+
+
+@router.get("/{asset_id}", response_model=AssetDetailOut)
+async def get_asset(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = int(current_user.get("user_id"))
+
+    query = text("""
+        SELECT
+            a.idqr_assets,
+            a.asset_name,
+            a.asset_color,
+            a.asset_serial,
+            a.asset_description,
+            a.group_id,
+            a.parent_asset_id,
+            a.iditem_types,
+            a.status,
+            (SELECT att.file_url FROM asset_attachments AS att
+             WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
+             LIMIT 1) AS image_url
+        FROM qr_assets AS a
+        WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
+    """)
+
+    row = db.execute(query, {"asset_id": asset_id, "user_id": user_id}).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    return dict(row)
+
+
+@router.put("/{asset_id}", response_model=AssetDetailOut)
+async def update_asset(
+    asset_id: int,
+    asset_data: AssetUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    mongo_db = Depends(get_mongo_db)
+):
+    user_id = int(current_user.get("user_id"))
+
+    exists = db.execute(
+        text("SELECT idqr_assets FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id"),
+        {"asset_id": asset_id, "user_id": user_id}
+    ).first()
+
+    if not exists:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    update_query = text("""
+        UPDATE qr_assets
+        SET asset_name        = :asset_name,
+            asset_description = :desc,
+            asset_color       = :color,
+            asset_serial      = :serial,
+            group_id          = :group_id,
+            parent_asset_id   = :parent_id,
+            iditem_types      = :type_id
+        WHERE idqr_assets = :asset_id AND users_idusers = :user_id
+    """)
+
+    try:
+        db.execute(update_query, {
+            "asset_name": asset_data.asset_name,
+            "desc":       asset_data.asset_description,
+            "color":      asset_data.asset_color,
+            "serial":     asset_data.asset_serial,
+            "group_id":   asset_data.group_id,
+            "parent_id":  asset_data.parent_asset_id,
+            "type_id":    asset_data.iditem_types,
+            "asset_id":   asset_id,
+            "user_id":    user_id,
+        })
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log_error(mongo_db, f"/assets/{asset_id}", "PUT", e,
+                  request_payload=asset_data.dict(), user_context={"user_id": user_id})
+        raise HTTPException(status_code=500, detail="Failed to update asset")
+
+    fetch_query = text("""
+        SELECT
+            a.idqr_assets, a.asset_name, a.asset_color, a.asset_serial,
+            a.asset_description, a.group_id, a.parent_asset_id, a.iditem_types, a.status,
+            (SELECT att.file_url FROM asset_attachments AS att
+             WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
+             LIMIT 1) AS image_url
+        FROM qr_assets AS a
+        WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
+    """)
+    row = db.execute(fetch_query, {"asset_id": asset_id, "user_id": user_id}).mappings().first()
+    return dict(row)
+
+
+@router.delete("/{asset_id}")
+async def delete_asset(
+    asset_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    mongo_db = Depends(get_mongo_db)
+):
+    user_id = int(current_user.get("user_id"))
+
+    exists = db.execute(
+        text("SELECT idqr_assets FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id"),
+        {"asset_id": asset_id, "user_id": user_id}
+    ).first()
+
+    if not exists:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    try:
+        db.execute(
+            text("UPDATE qr_assets SET status = 'DELETED' WHERE idqr_assets = :asset_id AND users_idusers = :user_id"),
+            {"asset_id": asset_id, "user_id": user_id}
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log_error(mongo_db, f"/assets/{asset_id}", "DELETE", e, user_context={"user_id": user_id})
+        raise HTTPException(status_code=500, detail="Failed to delete asset")
+
+    return {"success": True}
