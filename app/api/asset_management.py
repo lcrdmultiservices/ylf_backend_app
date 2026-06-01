@@ -36,6 +36,7 @@ class AssetDetailOut(BaseModel):
     iditem_types: int
     status: str
     image_url: str | None = None
+    receipt_url: str | None = None
 
 class AssetUpdate(BaseModel):
     asset_name: str
@@ -317,7 +318,10 @@ async def get_asset(
             a.status,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
-             LIMIT 1) AS image_url
+             LIMIT 1) AS image_url,
+            (SELECT att.file_url FROM asset_attachments AS att
+             WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_document'
+             LIMIT 1) AS receipt_url
         FROM qr_assets AS a
         WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
     """)
@@ -386,7 +390,10 @@ async def update_asset(
             a.asset_description, a.group_id, a.parent_asset_id, a.iditem_types, a.status,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
-             LIMIT 1) AS image_url
+             LIMIT 1) AS image_url,
+            (SELECT att.file_url FROM asset_attachments AS att
+             WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_document'
+             LIMIT 1) AS receipt_url
         FROM qr_assets AS a
         WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
     """)
