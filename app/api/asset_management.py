@@ -96,10 +96,10 @@ async def create_asset(request: Request, asset_data: AssetCreate, db: Session = 
 @limiter.limit("10/minute")
 async def upload_asset_attachment(
     request: Request,
-    asset_id: int, 
+    asset_id: int,
     use: str,
-    file: UploadFile = File(...), 
-    db: Session = Depends(get_db), 
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     mongo_db = Depends(get_mongo_db)
 ):
@@ -108,53 +108,72 @@ async def upload_asset_attachment(
     if use not in {"asset_picture", "asset_document"}:
         raise HTTPException(status_code=400, detail="Invalid use value. Must be 'asset_picture' or 'asset_document'")
 
-    # 1. Verificar que el asset pertenece al usuario (sin cambios)
+    # 1. Verificar que el asset pertenece al usuario
     asset_check_query = text("SELECT idqr_assets FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id")
     if not db.execute(asset_check_query, {"asset_id": asset_id, "user_id": user_id}).first():
         raise HTTPException(status_code=404, detail="Asset not found or permission denied")
-    
-    # 2. Leer contenido y validar (sin cambios)
+
+    # 2. Leer contenido y validar MIME
     file_content = await file.read()
     await file.seek(0)
-    
+
     detected_mime_type = magic.from_buffer(file_content, mime=True)
     allowed_mime_types = ['image/jpeg', 'image/png', 'application/pdf']
-    
+
     if detected_mime_type not in allowed_mime_types:
         raise HTTPException(status_code=400, detail=f"Invalid file type: {detected_mime_type}")
 
-    # 3. Guardar el archivo en el servidor (con corrección)
+    # 3. Guardar el archivo nuevo en el servidor
     file_extension = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     file_path = os.path.join(MEDIA_ROOT, unique_filename)
-    
+
     with open(file_path, "wb") as buffer:
-        # ✅ CAMBIO 1: Escribimos el contenido que ya habíamos leído, en lugar de leerlo de nuevo.
         buffer.write(file_content)
 
-    # 4. Guardar la referencia en la base de datos (con correcciones)
+    # 4. Upsert: recopilar todos los registros anteriores del mismo tipo y borrarlos de BD
+    existing_files = db.execute(
+        text("SELECT file_url FROM asset_attachments WHERE asset_id = :asset_id AND attachment_type = :type"),
+        {"asset_id": asset_id, "type": use}
+    ).fetchall()
+
+    if existing_files:
+        db.execute(
+            text("DELETE FROM asset_attachments WHERE asset_id = :asset_id AND attachment_type = :type"),
+            {"asset_id": asset_id, "type": use}
+        )
+
+    # 5. Insertar el nuevo registro
     file_url = f"/{MEDIA_ROOT}/{unique_filename}"
-    
+
     attachment_query = text("""
         INSERT INTO asset_attachments (asset_id, attachment_type, file_url, mime_type, original_filename, file_size_bytes)
         VALUES (:asset_id, :type, :url, :mime, :orig_name, :size)
     """)
-    
+
     try:
         db.execute(attachment_query, {
             "asset_id": asset_id,
-            "type": use,  # ✅ CAMBIO 2: El parámetro ahora es 'type', coincidiendo con el :type del query.
+            "type": use,
             "url": file_url,
             "mime": file.content_type,
             "orig_name": file.filename,
-            "size": len(file_content) # ✅ CAMBIO 3: Usamos el tamaño real del contenido leído.
+            "size": len(file_content)
         })
         db.commit()
     except Exception as e:
         db.rollback()
-        os.remove(file_path) # Si falla la BD, borramos el archivo subido
+        os.remove(file_path)
         log_error(mongo_db, f"/assets/{asset_id}/attachments", "POST", e, user_context={"user_id": user_id})
         raise HTTPException(status_code=500, detail="Failed to save attachment metadata")
+
+    # 6. Borrar archivos físicos antiguos solo después del commit exitoso
+    for row in existing_files:
+        old_path = row.file_url.lstrip("/")
+        try:
+            os.remove(old_path)
+        except FileNotFoundError:
+            pass
 
     return {"filename": unique_filename, "file_url": file_url}
     
