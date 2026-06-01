@@ -104,7 +104,10 @@ async def upload_asset_attachment(
     mongo_db = Depends(get_mongo_db)
 ):
     user_id = int(current_user.get("user_id"))
-    
+
+    if use not in {"asset_picture", "asset_document"}:
+        raise HTTPException(status_code=400, detail="Invalid use value. Must be 'asset_picture' or 'asset_document'")
+
     # 1. Verificar que el asset pertenece al usuario (sin cambios)
     asset_check_query = text("SELECT idqr_assets FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id")
     if not db.execute(asset_check_query, {"asset_id": asset_id, "user_id": user_id}).first():
@@ -318,10 +321,10 @@ async def get_asset(
             a.status,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
-             LIMIT 1) AS image_url,
+             ORDER BY att.attachment_id DESC LIMIT 1) AS image_url,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_document'
-             LIMIT 1) AS receipt_url
+             ORDER BY att.attachment_id DESC LIMIT 1) AS receipt_url
         FROM qr_assets AS a
         WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
     """)
@@ -390,10 +393,10 @@ async def update_asset(
             a.asset_description, a.group_id, a.parent_asset_id, a.iditem_types, a.status,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
-             LIMIT 1) AS image_url,
+             ORDER BY att.attachment_id DESC LIMIT 1) AS image_url,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_document'
-             LIMIT 1) AS receipt_url
+             ORDER BY att.attachment_id DESC LIMIT 1) AS receipt_url
         FROM qr_assets AS a
         WHERE a.idqr_assets = :asset_id AND a.users_idusers = :user_id
     """)
