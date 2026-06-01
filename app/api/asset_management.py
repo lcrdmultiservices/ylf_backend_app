@@ -190,6 +190,12 @@ class ContainerOut(BaseModel):
     asset_name: str
     parent_asset_id: int | None
 
+class UnassignedAssetOut(BaseModel):
+    idqr_assets: int
+    asset_name: str
+    iditem_types: int
+    item_type_name: str
+
 @router.get("/containers", response_model=List[ContainerOut])
 async def get_user_containers(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
@@ -229,9 +235,34 @@ async def get_user_containers(db: Session = Depends(get_db), current_user: dict 
         return container_list
 
     except Exception as e:
-        # Aquí podrías usar tu mongo_logger
         raise HTTPException(status_code=500, detail="Error fetching containers")
-        
+
+
+@router.get("/unassigned", response_model=List[UnassignedAssetOut])
+async def get_unassigned_assets(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    user_id = int(current_user.get("user_id"))
+
+    query = text("""
+        SELECT
+            a.idqr_assets,
+            a.asset_name,
+            a.iditem_types,
+            t.name AS item_type_name
+        FROM qr_assets AS a
+        JOIN asset_types AS t ON a.iditem_types = t.type_id
+        WHERE a.users_idusers = :user_id
+          AND a.qr_code_id IS NULL
+          AND a.status = 'ACTIVE'
+        ORDER BY a.asset_name ASC
+    """)
+
+    results = db.execute(query, {"user_id": user_id}).mappings().all()
+    return results
+
+
 # --- Modelos Pydantic para la respuesta del listado ---
 
 class AssetOut(BaseModel):
