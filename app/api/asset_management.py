@@ -1,6 +1,7 @@
 import os
 import uuid
 import magic
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from typing import List
 from pydantic import BaseModel, Field
@@ -109,9 +110,13 @@ async def upload_asset_attachment(
         raise HTTPException(status_code=400, detail="Invalid use value. Must be 'asset_picture' or 'asset_document'")
 
     # 1. Verificar que el asset pertenece al usuario
-    asset_check_query = text("SELECT idqr_assets FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id")
-    if not db.execute(asset_check_query, {"asset_id": asset_id, "user_id": user_id}).first():
+    asset_row = db.execute(
+        text("SELECT idqr_assets, asset_name FROM qr_assets WHERE idqr_assets = :asset_id AND users_idusers = :user_id"),
+        {"asset_id": asset_id, "user_id": user_id}
+    ).first()
+    if not asset_row:
         raise HTTPException(status_code=404, detail="Asset not found or permission denied")
+    asset_name_slug = asset_row.asset_name.replace(" ", "_")
 
     # 2. Leer contenido y validar MIME
     file_content = await file.read()
@@ -125,7 +130,10 @@ async def upload_asset_attachment(
 
     # 3. Guardar el archivo nuevo en el servidor
     file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    short_uuid = str(uuid.uuid4())[:8]
+    date_str = date.today().strftime("%Y%m%d")
+    prefix = "receipt" if use == "asset_document" else "img"
+    unique_filename = f"{prefix}_{asset_name_slug}_{date_str}_{short_uuid}{file_extension}"
     file_path = os.path.join(MEDIA_ROOT, unique_filename)
 
     with open(file_path, "wb") as buffer:
