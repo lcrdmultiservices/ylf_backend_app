@@ -36,6 +36,7 @@ class AssetDetailOut(BaseModel):
     parent_asset_id: int | None = None
     iditem_types: int
     status: str
+    has_qr_code: bool = False
     image_url: str | None = None
     receipt_url: str | None = None
 
@@ -383,6 +384,7 @@ async def get_asset(
             a.parent_asset_id,
             a.iditem_types,
             a.status,
+            (a.qr_code_id IS NOT NULL) AS has_qr_code,
             (SELECT att.file_url FROM asset_attachments AS att
              WHERE att.asset_id = a.idqr_assets AND att.attachment_type = 'asset_picture'
              ORDER BY att.attachment_id DESC LIMIT 1) AS image_url,
