@@ -30,7 +30,7 @@ from app.api import identifier_manager
 # Configurar logging básico
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-app = FastAPI()
+app = FastAPI(redirect_slashes=False)
 
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
