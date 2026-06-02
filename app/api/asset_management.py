@@ -241,6 +241,7 @@ async def get_user_containers(db: Session = Depends(get_db), current_user: dict 
 
 @router.get("/unassigned", response_model=List[UnassignedAssetOut])
 async def get_unassigned_assets(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
