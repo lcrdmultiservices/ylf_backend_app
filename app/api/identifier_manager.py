@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import List
 from pydantic import BaseModel
+from datetime import datetime
 from sqlalchemy.orm import Session
 from app.db.database import get_db, get_mongo_db
 from app.auth.security import get_current_user
@@ -20,6 +21,7 @@ class AvailableIdentifierOut(BaseModel):
     status: str
     identifier_type: str
     product_name: str
+    created_at: datetime | None = None
 
 # Modelo para un identificador ya asignado a un activo
 class AssignedIdentifierOut(BaseModel):
@@ -67,17 +69,17 @@ async def get_user_identifiers(
     if filter_status == 'available':
         query = text("""
             SELECT
-                identifier_id,
-                qr_code,
-                status,
-                identifier_type,
-                product_name
-            FROM
-                vw_qr_code_properties
-            WHERE
-                purchaser_user_id = :user_id
-                AND online_delivery = 1
-                AND status = 'ASSIGNED_TO_PO'
+                vwp.identifier_id,
+                vwp.qr_code,
+                vwp.status,
+                vwp.identifier_type,
+                vwp.product_name,
+                DATE(i.created_at) AS created_at
+            FROM vw_qr_code_properties vwp
+            JOIN identifiers i ON i.idqr_codes = vwp.identifier_id
+            WHERE vwp.purchaser_user_id = :user_id
+              AND vwp.online_delivery = 1
+              AND vwp.status = 'ASSIGNED_TO_PO'
         """)
         params = {"user_id": user_id}
 
