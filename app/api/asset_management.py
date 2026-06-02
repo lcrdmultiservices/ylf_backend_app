@@ -195,6 +195,7 @@ class UnassignedAssetOut(BaseModel):
     asset_name: str
     iditem_types: int
     item_type_name: str
+    image_url: str | None = None
 
 @router.get("/containers", response_model=List[ContainerOut])
 async def get_user_containers(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -250,7 +251,11 @@ async def get_unassigned_assets(
             a.idqr_assets,
             a.asset_name,
             a.iditem_types,
-            t.name AS item_type_name
+            t.name AS item_type_name,
+            (SELECT att.file_url FROM asset_attachments att
+             WHERE att.asset_id = a.idqr_assets
+             AND att.attachment_type = 'asset_picture'
+             ORDER BY att.attachment_id DESC LIMIT 1) AS image_url
         FROM qr_assets AS a
         JOIN asset_types AS t ON a.iditem_types = t.type_id
         WHERE a.users_idusers = :user_id
