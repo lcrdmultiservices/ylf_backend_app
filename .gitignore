@@ -67,3 +67,4 @@ instance/
 *.orig
 archivo.txt
 backend.txt
+media/*
